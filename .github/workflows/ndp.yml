@@ -1,0 +1,36 @@
+name: Run ndp-min
+
+on:
+  schedule:
+    - cron: "*/20 * * * *" # Runs every 10 minutes
+  workflow_dispatch: # Allows manual run of the workflow
+
+concurrency:
+  group: ndp-group
+  cancel-in-progress: true
+  
+jobs:
+  run-vooi:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.x" # Use the desired Python version
+
+    - name: Install dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Create data.txt with secret value
+      env:
+        DATA_SECRET: ${{ secrets.DATA }}
+      run: echo "$DATA_SECRET" > np_tokens.txt
+
+    - name: Run main.py
+      run: python3 main.py
