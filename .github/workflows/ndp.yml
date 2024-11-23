@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
   
 jobs:
-  run-vooi:
+  run-ndpm:
     runs-on: ubuntu-latest
 
     steps:
