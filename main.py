@@ -63,6 +63,23 @@ last_ping_time = {}
 def uuidv4():
     return str(uuid.uuid4())
 
+def format_proxy(proxy):
+    """Format proxy string into the correct format based on type"""
+    if proxy.startswith('socks'):
+        return proxy
+    else:
+        if not proxy.startswith('http'):
+            return f'http://{proxy}'
+        return proxy
+
+def get_proxy_dict(proxy):
+    """Convert proxy string to dictionary format for requests"""
+    formatted_proxy = format_proxy(proxy)
+    return {
+        "http": formatted_proxy,
+        "https": formatted_proxy
+    }
+
 def valid_resp(resp):
     if not resp or "code" not in resp or resp["code"] < 0:
         raise ValueError("Invalid response")
@@ -104,13 +121,39 @@ async def call_api(url, data, proxy, token):
 
     try:
         scraper = cloudscraper.create_scraper()
-        response = scraper.post(url, json=data, headers=headers, proxies={
-            "http": proxy, "https": proxy}, timeout=15)
+        proxy_dict = get_proxy_dict(proxy)
+        
+        response = scraper.post(
+            url, 
+            json=data, 
+            headers=headers, 
+            proxies=proxy_dict,
+            timeout=15
+        )
         response.raise_for_status()
         return valid_resp(response.json())
     except Exception as e:
         logger.error(f"Error during API call: {e}")
         raise ValueError(f"Failed API call to {url}")
+
+async def render_profile_info(proxy_label, proxy, token):
+    global browser_id, account_info
+
+    try:
+        browser_id = uuidv4()
+        response = await call_api(DOMAIN_API["SESSION"], {}, proxy, token)
+        valid_resp(response)
+        account_info = response["data"]
+        
+        if account_info.get("uid"):
+            save_session_info(proxy, account_info)
+            await start_ping(proxy_label, proxy, token)
+        else:
+            handle_logout(proxy)
+            
+    except Exception as e:
+        logger.error(f"[{proxy_label}] Error in render_profile_info for proxy {proxy}: {e}")
+        raise e
 
 async def ping(proxy_label, proxy, token):
     global last_ping_time, RETRIES, status_connect
@@ -131,8 +174,9 @@ async def ping(proxy_label, proxy, token):
         }
 
         response = await call_api(DOMAIN_API["PING"], data, proxy, token)
+        proxy_type = "SOCKS" if proxy.startswith('socks') else "HTTP"
         if response["code"] == 0:
-            logger.info(f"[{proxy_label}] Ping successful via proxy {proxy}: {response}")
+            logger.info(f"[{proxy_label}] Ping successful via {proxy_type} proxy {proxy}: {response}")
             RETRIES = 0
             status_connect = CONNECTION_STATES["CONNECTED"]
         else:
@@ -171,25 +215,6 @@ def save_session_info(proxy, data):
 def load_session_info(proxy):
     return {}
 
-async def render_profile_info(proxy_label, proxy, token):
-    global browser_id, account_info
-
-    try:
-        browser_id = uuidv4()
-        response = await call_api(DOMAIN_API["SESSION"], {}, proxy, token)
-        valid_resp(response)
-        account_info = response["data"]
-        
-        if account_info.get("uid"):
-            save_session_info(proxy, account_info)
-            await start_ping(proxy_label, proxy, token)
-        else:
-            handle_logout(proxy)
-            
-    except Exception as e:
-        logger.error(f"[{proxy_label}] Error in render_profile_info for proxy {proxy}: {e}")
-        raise e
-
 async def start_ping(proxy_label, proxy, token):
     try:
         while True:
@@ -202,8 +227,10 @@ async def start_ping(proxy_label, proxy, token):
 
 async def handle_single_proxy(proxy_label, proxy, token):
     try:
+        proxy_type = "SOCKS" if proxy.startswith('socks') else "HTTP"
+        logger.info(f"[{proxy_label}] Attempting connection with {proxy_type} proxy: {proxy}")
         await render_profile_info(proxy_label, proxy, token)
-        logger.success(f"[{proxy_label}] Successfully connected using proxy {proxy}")
+        logger.success(f"[{proxy_label}] Successfully connected using {proxy_type} proxy {proxy}")
     except Exception as e:
         logger.error(f"[{proxy_label}] Failed to connect using proxy {proxy}: {e}")
 
@@ -242,6 +269,8 @@ if __name__ == '__main__':
     display_header()
     show_warning()
     print("\nUsing token from np_tokens.txt")
+    print("Make sure to install required packages:")
+    print("pip install requests asyncio aiohttp cloudscraper pyfiglet colorama loguru fake-useragent requests[socks] PySocks")
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
