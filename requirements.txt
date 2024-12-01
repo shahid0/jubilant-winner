@@ -6,3 +6,5 @@ loguru
 colorama
 pyfiglet
 fake_useragent
+requests[socks]
+PySocks
