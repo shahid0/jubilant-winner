@@ -9,6 +9,7 @@ from loguru import logger
 from fake_useragent import UserAgent
 from concurrent.futures import ThreadPoolExecutor
 
+# [Previous display_header function and constants remain the same]
 def display_header():
     
     print(f"{Fore.YELLOW}NODEPAY NETWORK BOT{Fore.RESET}")
@@ -30,7 +31,13 @@ class AccountData:
         self.token = token
         self.proxy = proxy
         self.proxy_label = proxy_label
-        self.browser_id = str(uuid.uuid4())
+        self.browser_id = {
+            'ping_count': 0,
+            'successful_pings': 0,
+            'score': 0,
+            'start_time': time.time(),
+            'last_ping_time': None
+        }
         self.account_info = {}
         self.last_ping_time = None
         self.retries = 0
@@ -53,10 +60,9 @@ def truncate_token(token):
     return f"{token[:5]}...{token[-5:]}"
 
 async def execute_request(url, data, account):
-    user_agent = UserAgent(os=['windows', 'macos', 'linux'], browsers='chrome')
     headers = {
         "Authorization": f"Bearer {account.token}",
-        "User-Agent": user_agent.random,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://app.nodepay.ai/",
         "Accept": "application/json, text/plain, */*",
@@ -64,7 +70,10 @@ async def execute_request(url, data, account):
         "Origin": "chrome-extension://lgmpfmgeabnnlemejacfljbmonaomfmm",
         "Sec-Ch-Ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
         "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"'
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cors-site"
     }
 
     proxy_config = get_proxy_dict(account.proxy) if account.proxy else None
@@ -90,21 +99,22 @@ async def perform_ping(account):
         return
 
     account.last_ping_time = current_time
-    logger.info(f"{Fore.CYAN}[{time.strftime('%H:%M:%S')}][{account.proxy_label}]{Fore.RESET} Attempting ping from {Fore.CYAN}{truncate_token(account.token)}{Fore.RESET}")
+    logger.info(f"{Fore.CYAN}[{time.strftime('%H:%M:%S')}][{account.proxy_label}]{Fore.RESET} Attempting ping from {Fore.CYAN}{truncate_token(account.token)}{Fore.RESET} with {Fore.YELLOW}{account.proxy if account.proxy else 'no proxy'}{Fore.RESET}")
 
     for url in DOMAIN_API["PING"]:
         try:
             data = {
                 "id": account.account_info.get("uid"),
                 "browser_id": account.browser_id,
-                "timestamp": int(time.time()),
-                "version": "2.2.7"
+                "timestamp": int(time.time())
             }
             
             response = await execute_request(url, data, account)
             
             if response["code"] == 0:
                 account.successful_pings += 1
+                account.browser_id['successful_pings'] += 1
+                account.browser_id['ping_count'] += 1
                 network_quality = response.get("data", {}).get("ip_score", "N/A")
                 logger.info(f"{Fore.CYAN}[{time.strftime('%H:%M:%S')}][{account.proxy_label}]{Fore.RESET} Ping {Fore.GREEN}success{Fore.RESET} from {Fore.CYAN}{truncate_token(account.token)}{Fore.RESET}, Network Quality: {Fore.GREEN}{network_quality}{Fore.RESET}")
                 account.retries = 0
@@ -130,11 +140,14 @@ async def start_ping(account):
 async def initialize_account(account):
     try:
         logger.info(f"{Fore.CYAN}[{account.proxy_label}]{Fore.RESET} Initializing account with proxy: {account.proxy}")
+        
+        # First get the session info
         response = await execute_request(DOMAIN_API["SESSION"], {}, account)
         
         if response.get("code") == 0:
             account.account_info = response["data"]
             if account.account_info.get("uid"):
+                logger.info(f"{Fore.GREEN}Successfully initialized session for {truncate_token(account.token)}{Fore.RESET}")
                 await start_ping(account)
             else:
                 logger.error(f"No UID found for token {truncate_token(account.token)}")
@@ -178,7 +191,7 @@ async def main():
         await asyncio.sleep(60)
 
 if __name__ == '__main__':
-    display_header()
+    # display_header()
     print("\nUsing token from np_tokens.txt")
     print("Required packages: requests asyncio aiohttp cloudscraper pyfiglet colorama loguru fake-useragent requests[socks] PySocks")
     
