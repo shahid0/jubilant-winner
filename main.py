@@ -1,4 +1,3 @@
-import requests
 import asyncio
 import aiohttp
 import time
@@ -11,267 +10,184 @@ from fake_useragent import UserAgent
 from concurrent.futures import ThreadPoolExecutor
 
 def display_header():
-    custom_ascii_art = f"""
-{Fore.CYAN}
-███╗   ██╗ ██████╗ ██████╗ ███████╗██████╗  █████╗ ██╗   ██╗  
-████╗  ██║██╔═══██╗██╔══██╗██╔════╝██╔══██╗██╔══██╗╚██╗ ██╔╝  
-██╔██╗ ██║██║   ██║██║  ██║█████╗  ██████╔╝███████║ ╚████╔╝   
-██║╚██╗██║██║   ██║██║  ██║██╔══╝  ██╔═══╝ ██╔══██║  ╚██╔╝    
-██║ ╚████║╚██████╔╝██████╔╝███████╗██║     ██║  ██║   ██║     
-╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝     ╚═╝  ╚═╝   ╚═╝     
-                                                              
-███╗   ██╗███████╗████████╗██╗    ██╗ ██████╗ ██████╗ ██╗  ██╗
-████╗  ██║██╔════╝╚══██╔══╝██║    ██║██╔═══██╗██╔══██╗██║ ██╔╝
-██╔██╗ ██║█████╗     ██║   ██║ █╗ ██║██║   ██║██████╔╝█████╔╝ 
-██║╚██╗██║██╔══╝     ██║   ██║███╗██║██║   ██║██╔══██╗██╔═██╗ 
-██║ ╚████║███████╗   ██║   ╚███╔███╔╝╚██████╔╝██║  ██║██║  ██╗
-╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝{Fore.RESET} 
-"""
-    print(custom_ascii_art)
+    
     print(f"{Fore.YELLOW}NODEPAY NETWORK BOT{Fore.RESET}")
     print("WELCOME & ENJOY SIR!", Fore.RESET)
     print("AUTHOR : NOFAN RAMBE", Fore.RESET)
 
-def show_warning():
-    confirm = ""
-    if confirm.strip() == "":
-        print("Continuing...")
-    else:
-        print("Exiting...")
-        exit()
-
-# Constants
 PING_INTERVAL = 15
-RETRIES = 3
+RETRIES = 10
 
 DOMAIN_API = {
     "SESSION": "https://api.nodepay.ai/api/auth/session",
-    "PING": "http://52.77.10.116/api/network/ping"
+    "PING": [
+        "https://nw.nodepay.org/api/network/ping"
+    ]
 }
 
-CONNECTION_STATES = {
-    "CONNECTED": 1,
-    "DISCONNECTED": 2,
-    "NONE_CONNECTION": 3
-}
-
-status_connect = CONNECTION_STATES["NONE_CONNECTION"]
-browser_id = None
-account_info = {}
-last_ping_time = {}
-
-def uuidv4():
-    return str(uuid.uuid4())
+class AccountData:
+    def __init__(self, token, proxy, proxy_label):
+        self.token = token
+        self.proxy = proxy
+        self.proxy_label = proxy_label
+        self.browser_id = str(uuid.uuid4())
+        self.account_info = {}
+        self.last_ping_time = None
+        self.retries = 0
+        self.successful_pings = 0
+        self.ping_count = 0
 
 def format_proxy(proxy):
-    """Format proxy string into the correct format based on type"""
     if proxy.startswith('socks'):
         return proxy
-    else:
-        if not proxy.startswith('http'):
-            return f'http://{proxy}'
-        return proxy
+    return f'http://{proxy}' if not proxy.startswith('http') else proxy
 
 def get_proxy_dict(proxy):
-    """Convert proxy string to dictionary format for requests"""
     formatted_proxy = format_proxy(proxy)
     return {
         "http": formatted_proxy,
         "https": formatted_proxy
     }
 
-def valid_resp(resp):
-    if not resp or "code" not in resp or resp["code"] < 0:
-        raise ValueError("Invalid response")
-    return resp
+def truncate_token(token):
+    return f"{token[:5]}...{token[-5:]}"
 
-def load_proxies(proxy_file):
-    try:
-        with open(proxy_file, 'r') as file:
-            proxies = file.read().splitlines()
-        return proxies
-    except Exception as e:
-        logger.error(f"Failed to load proxies: {e}")
-        raise SystemExit("Exiting due to failure in loading proxies")
-
-def load_accounts(file_name):
-    accounts = []
-    try:
-        with open(file_name, 'r') as file:
-            for line in file:
-                token = line.strip()
-                if token:
-                    accounts.append(token)
-    except Exception as e:
-        logger.error(f"Failed to load accounts: {e}")
-        raise SystemExit("Exiting due to failure in loading accounts")
-    return accounts
-
-async def call_api(url, data, proxy, token):
+async def execute_request(url, data, account):
     user_agent = UserAgent(os=['windows', 'macos', 'linux'], browsers='chrome')
-    random_user_agent = user_agent.random
     headers = {
-        "Authorization": f"Bearer {token}",
-        "User-Agent": random_user_agent,
+        "Authorization": f"Bearer {account.token}",
+        "User-Agent": user_agent.random,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://app.nodepay.ai/",
+        "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
         "Origin": "chrome-extension://lgmpfmgeabnnlemejacfljbmonaomfmm",
-        "Accept": "application/json",
-        "Accept-Language": "en-US,en;q=0.5",
+        "Sec-Ch-Ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"'
     }
 
+    proxy_config = get_proxy_dict(account.proxy) if account.proxy else None
+    
     try:
-        scraper = cloudscraper.create_scraper()
-        proxy_dict = get_proxy_dict(proxy)
-        
-        response = scraper.post(
-            url, 
-            json=data, 
-            headers=headers, 
-            proxies=proxy_dict,
-            timeout=15
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True
+            }
         )
+        response = scraper.post(url, json=data, headers=headers, proxies=proxy_config, timeout=60)
         response.raise_for_status()
-        return valid_resp(response.json())
+        return response.json()
     except Exception as e:
-        logger.error(f"Error during API call: {e}")
+        logger.error(f"{Fore.RED}Error during API call for token {truncate_token(account.token)} with proxy {account.proxy}: {e}{Fore.RESET}")
         raise ValueError(f"Failed API call to {url}")
 
-async def render_profile_info(proxy_label, proxy, token):
-    global browser_id, account_info
-
-    try:
-        browser_id = uuidv4()
-        response = await call_api(DOMAIN_API["SESSION"], {}, proxy, token)
-        valid_resp(response)
-        account_info = response["data"]
-        
-        if account_info.get("uid"):
-            save_session_info(proxy, account_info)
-            await start_ping(proxy_label, proxy, token)
-        else:
-            handle_logout(proxy)
-            
-    except Exception as e:
-        logger.error(f"[{proxy_label}] Error in render_profile_info for proxy {proxy}: {e}")
-        raise e
-
-async def ping(proxy_label, proxy, token):
-    global last_ping_time, RETRIES, status_connect
-
+async def perform_ping(account):
     current_time = time.time()
-    if proxy in last_ping_time and (current_time - last_ping_time[proxy]) < PING_INTERVAL:
-        logger.info(f"[{proxy_label}] Skipping ping for proxy {proxy}, not enough time elapsed")
+    if account.last_ping_time and (current_time - account.last_ping_time) < PING_INTERVAL:
         return
 
-    last_ping_time[proxy] = current_time
+    account.last_ping_time = current_time
+    logger.info(f"{Fore.CYAN}[{time.strftime('%H:%M:%S')}][{account.proxy_label}]{Fore.RESET} Attempting ping from {Fore.CYAN}{truncate_token(account.token)}{Fore.RESET}")
 
-    try:
-        data = {
-            "id": account_info.get("uid"),
-            "browser_id": browser_id,
-            "timestamp": int(time.time()),
-            "version": "2.2.7"
-        }
+    for url in DOMAIN_API["PING"]:
+        try:
+            data = {
+                "id": account.account_info.get("uid"),
+                "browser_id": account.browser_id,
+                "timestamp": int(time.time()),
+                "version": "2.2.7"
+            }
+            
+            response = await execute_request(url, data, account)
+            
+            if response["code"] == 0:
+                account.successful_pings += 1
+                network_quality = response.get("data", {}).get("ip_score", "N/A")
+                logger.info(f"{Fore.CYAN}[{time.strftime('%H:%M:%S')}][{account.proxy_label}]{Fore.RESET} Ping {Fore.GREEN}success{Fore.RESET} from {Fore.CYAN}{truncate_token(account.token)}{Fore.RESET}, Network Quality: {Fore.GREEN}{network_quality}{Fore.RESET}")
+                account.retries = 0
+                return
+            else:
+                logger.warning(f"{Fore.RED}Ping failed{Fore.RESET} for token {truncate_token(account.token)} using proxy {account.proxy}")
+                account.retries += 1
 
-        response = await call_api(DOMAIN_API["PING"], data, proxy, token)
-        proxy_type = "SOCKS" if proxy.startswith('socks') else "HTTP"
-        if response["code"] == 0:
-            logger.info(f"[{proxy_label}] Ping successful via {proxy_type} proxy {proxy}: {response}")
-            RETRIES = 0
-            status_connect = CONNECTION_STATES["CONNECTED"]
-        else:
-            handle_ping_fail(proxy, response)
-    except Exception as e:
-        logger.error(f"[{proxy_label}] Ping failed via proxy {proxy}: {e}")
-        handle_ping_fail(proxy, None)
+        except Exception as e:
+            logger.error(f"{Fore.RED}Ping failed for token {truncate_token(account.token)} using URL {url}: {e}{Fore.RESET}")
+            account.retries += 1
 
-def handle_ping_fail(proxy, response):
-    global RETRIES, status_connect
-    RETRIES += 1
-    if response and response.get("code") == 403:
-        handle_logout(proxy)
-    elif RETRIES < 2:
-        status_connect = CONNECTION_STATES["DISCONNECTED"]
-    else:
-        status_connect = CONNECTION_STATES["DISCONNECTED"]
-
-def handle_logout(proxy):
-    global status_connect, account_info
-    status_connect = CONNECTION_STATES["NONE_CONNECTION"]
-    account_info = {}
-    save_status(proxy, None)
-    logger.info(f"Logged out and cleared session info for proxy {proxy}")
-
-def save_status(proxy, status):
-    pass
-
-def save_session_info(proxy, data):
-    data_to_save = {
-        "uid": data.get("uid"),
-        "browser_id": browser_id
-    }
-    pass
-
-def load_session_info(proxy):
-    return {}
-
-async def start_ping(proxy_label, proxy, token):
+async def start_ping(account):
     try:
         while True:
-            await ping(proxy_label, proxy, token)
+            await perform_ping(account)
             await asyncio.sleep(PING_INTERVAL)
     except asyncio.CancelledError:
-        logger.info(f"[{proxy_label}] Ping task for proxy {proxy} was cancelled")
+        logger.info(f"Ping task cancelled for token {truncate_token(account.token)}")
     except Exception as e:
-        logger.error(f"[{proxy_label}] Error in start_ping for proxy {proxy}: {e}")
+        logger.error(f"Error in start_ping for token {truncate_token(account.token)}: {e}")
 
-async def handle_single_proxy(proxy_label, proxy, token):
+async def initialize_account(account):
     try:
-        proxy_type = "SOCKS" if proxy.startswith('socks') else "HTTP"
-        logger.info(f"[{proxy_label}] Attempting connection with {proxy_type} proxy: {proxy}")
-        await render_profile_info(proxy_label, proxy, token)
-        logger.success(f"[{proxy_label}] Successfully connected using {proxy_type} proxy {proxy}")
+        logger.info(f"{Fore.CYAN}[{account.proxy_label}]{Fore.RESET} Initializing account with proxy: {account.proxy}")
+        response = await execute_request(DOMAIN_API["SESSION"], {}, account)
+        
+        if response.get("code") == 0:
+            account.account_info = response["data"]
+            if account.account_info.get("uid"):
+                await start_ping(account)
+            else:
+                logger.error(f"No UID found for token {truncate_token(account.token)}")
+        else:
+            logger.error(f"Session initialization failed for token {truncate_token(account.token)}")
+            
     except Exception as e:
-        logger.error(f"[{proxy_label}] Failed to connect using proxy {proxy}: {e}")
+        logger.error(f"Failed to initialize account for token {truncate_token(account.token)}: {e}")
+
+def load_data(filename):
+    try:
+        with open(filename, 'r') as file:
+            return [line.strip() for line in file if line.strip()]
+    except Exception as e:
+        logger.error(f"Failed to load data from {filename}: {e}")
+        raise SystemExit(f"Failed to load {filename}")
 
 async def main():
-    # Load the single token from file
-    tokens = load_accounts("np_tokens.txt")
+    tokens = load_data("np_tokens.txt")
     if not tokens:
-        print("No token found in np_tokens.txt. Exiting the program.")
-        exit()
-    token = tokens[0]  # Use the first (and only) token
-    
-    # Load proxies
-    all_proxies = load_proxies('proxies.txt')
-    if not all_proxies:
-        print("No proxies found in proxies.txt. Exiting the program.")
-        exit()
+        logger.error("No tokens found in np_tokens.txt")
+        return
 
-    # Create tasks for each proxy using the same token
+    token = tokens[0]  # Use first token
+    proxies = load_data("proxies.txt")
+    if not proxies:
+        logger.error("No proxies found in proxies.txt")
+        return
+
     tasks = []
-    for i, proxy in enumerate(all_proxies):
-        proxy_label = f"Proxy-{i+1}"
-        task = handle_single_proxy(proxy_label, proxy, token)
-        tasks.append(task)
-    
-    # Run all proxy tasks concurrently
+    for i, proxy in enumerate(proxies):
+        account = AccountData(token, proxy, f"Proxy-{i+1}")
+        tasks.append(initialize_account(account))
+
     try:
         await asyncio.gather(*tasks)
     except Exception as e:
         logger.error(f"Error in main process: {e}")
-        
-    # Keep the program running
+
     while True:
         await asyncio.sleep(60)
 
 if __name__ == '__main__':
     display_header()
-    show_warning()
     print("\nUsing token from np_tokens.txt")
-    print("Make sure to install required packages:")
-    print("pip install requests asyncio aiohttp cloudscraper pyfiglet colorama loguru fake-useragent requests[socks] PySocks")
+    print("Required packages: requests asyncio aiohttp cloudscraper pyfiglet colorama loguru fake-useragent requests[socks] PySocks")
+    
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Program terminated by user.")
+        tasks = asyncio.all_tasks()
+        for task in tasks:
+            task.cancel()
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        asyncio.get_event_loop().close()
