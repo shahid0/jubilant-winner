@@ -32,7 +32,7 @@ def display_header():
     print("AUTHOR : NOFAN RAMBE", Fore.RESET)
 
 PING_INTERVAL = 15
-MAX_CONCURRENT_TASKS = 300  # Adjust based on your needs
+MAX_CONCURRENT_TASKS = 50  # Adjust based on your needs
 SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
 DOMAIN_API = {
