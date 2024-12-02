@@ -187,12 +187,14 @@ async function main() {
     console.log('Starting NodePay Network Bot');
     console.log(`Loaded ${tokens.length} tokens and ${proxies.length} proxies`);
 
+    // Use Account class correctly
     const accounts = proxies.map((proxy, i) => 
         new Account(tokens[0], proxy, `Proxy-${i + 1}`) // Adjust token assignment as needed
     );
 
-    await Promise.all(accounts.map(runAccount));
+    await Promise.all(accounts.map(processAccount)); // Ensure processAccount is correctly used
 }
+
 
 process.on('SIGINT', () => {
     console.log('Terminating process.');
