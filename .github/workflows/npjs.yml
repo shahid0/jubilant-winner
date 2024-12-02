@@ -25,7 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         npm init -y
-        npm install axios https-proxy-agent socks-proxy-agent chalk uuid figlet user-agents
+        npm install axios https-proxy-agent socks-proxy-agent uuid
 
     - name: Fetch proxies and create proxies.txt
       run: |
