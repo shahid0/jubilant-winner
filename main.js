@@ -4,69 +4,73 @@ const { SocksProxyAgent } = require('socks-proxy-agent');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs/promises');
 
-const PING_INTERVAL = 15000;
-const MAX_CONCURRENT_TASKS = 100;
-let activeConnections = 0;
-
-const DOMAIN_API = {
-    SESSION: 'https://api.nodepay.ai/api/auth/session',
-    PING: ['https://nw.nodepay.org/api/network/ping']
+const config = {
+    PING_INTERVAL: 15000,
+    MAX_CONCURRENT_TASKS: 100,
+    REQUEST_TIMEOUT: 30000,
+    API: {
+        SESSION: 'https://api.nodepay.ai/api/auth/session',
+        PING: ['https://nw.nodepay.org/api/network/ping']
+    },
+    HEADERS: {
+        'Accept-Language': 'en-US,en;q=0.9',
+        Referer: 'https://app.nodepay.ai/',
+        Accept: 'application/json, text/plain, */*',
+        'Content-Type': 'application/json',
+        Origin: 'chrome-extension://lgmpfmgeabnnlemejacfljbmonaomfmm',
+        'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+    }
 };
 
-class AccountData {
-    constructor(token, proxy, proxyLabel) {
+let activeConnections = 0;
+
+class Account {
+    constructor(token, proxy, label) {
         this.token = token;
         this.proxy = proxy;
-        this.proxyLabel = proxyLabel;
+        this.label = label;
         this.browserId = uuidv4();
         this.accountInfo = {};
         this.lastPingTime = null;
         this.retries = 0;
         this.successfulPings = 0;
         this.active = true;
-        this.axiosInstance = this.createAxiosInstance();
+        this.axiosInstance = this._createAxiosInstance();
     }
 
-    createProxyAgent(proxyUrl) {
-        const isSocks = proxyUrl.toLowerCase().startsWith('socks');
-        
-        if (isSocks) {
-            const formattedUrl = proxyUrl.replace(/^socks:\/\//, 'socks://').replace(/^socks4:\/\//, 'socks4://').replace(/^socks5:\/\//, 'socks5://');
-            return new SocksProxyAgent(formattedUrl);
-        } else {
-            const formattedUrl = proxyUrl.startsWith('http') ? proxyUrl : `http://${proxyUrl}`;
-            return new HttpsProxyAgent(formattedUrl);
-        }
+    _createProxyAgent(proxy) {
+        const isSocks = proxy.toLowerCase().startsWith('socks');
+        const formattedProxy = isSocks
+            ? proxy.replace(/^socks4?:\/\//, 'socks4://').replace(/^socks5?:\/\//, 'socks5://')
+            : proxy.startsWith('http') ? proxy : `http://${proxy}`;
+        return isSocks ? new SocksProxyAgent(formattedProxy) : new HttpsProxyAgent(formattedProxy);
     }
 
-    createAxiosInstance() {
-        const config = {
-            timeout: 30000,
-            headers: {
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://app.nodepay.ai/',
-                'Accept': 'application/json, text/plain, */*',
-                'Content-Type': 'application/json',
-                'Origin': 'chrome-extension://lgmpfmgeabnnlemejacfljbmonaomfmm',
-                'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
-            }
-        };
+    _createAxiosInstance() {
+        const agent = this.proxy ? this._createProxyAgent(this.proxy) : null;
+        return axios.create({
+            timeout: config.REQUEST_TIMEOUT,
+            headers: config.HEADERS,
+            httpsAgent: agent
+        });
+    }
 
-        if (this.proxy) {
-            try {
-                config.httpsAgent = this.createProxyAgent(this.proxy);
-                const proxyType = this.proxy.toLowerCase().startsWith('socks') ? 'SOCKS' : 'HTTP';
-                console.log(`[${this.proxyLabel}] Using ${proxyType} proxy: ${this.proxy}`);
-            } catch (error) {
-                console.error(`Failed to create proxy agent for ${this.proxy}: ${error.message}`);
-                throw error;
-            }
+    async makeRequest(url, data) {
+        try {
+            activeConnections++;
+            const response = await this.axiosInstance.post(url, data, {
+                headers: { Authorization: `Bearer ${this.token}` }
+            });
+            return response.data;
+        } catch (err) {
+            console.error(`[${this.label}] Request error: ${err.message}`);
+            throw err;
+        } finally {
+            activeConnections--;
         }
-
-        return axios.create(config);
     }
 
     truncateToken() {
@@ -74,40 +78,13 @@ class AccountData {
     }
 }
 
-async function executeRequest(url, data, account) {
-    if (activeConnections >= MAX_CONCURRENT_TASKS) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    
-    activeConnections++;
-    try {
-        const response = await account.axiosInstance({
-            method: 'POST',
-            url,
-            data,
-            headers: {
-                'Authorization': `Bearer ${account.token}`
-            }
-        });
-        return response.data;
-    } catch (error) {
-        console.error(`Error during API call for token ${account.truncateToken()} with proxy ${account.proxy}: ${error.message}`);
-        throw new Error(`Failed API call to ${url}`);
-    } finally {
-        activeConnections--;
-    }
-}
-
 async function performPing(account) {
-    if (!account.active) return;
-
     const currentTime = Date.now();
-    if (account.lastPingTime && (currentTime - account.lastPingTime) < PING_INTERVAL) return;
+    if (account.lastPingTime && currentTime - account.lastPingTime < config.PING_INTERVAL) return;
 
     account.lastPingTime = currentTime;
-    console.log(`[${new Date().toLocaleTimeString()}][${account.proxyLabel}] Attempting ping from ${account.truncateToken()}`);
 
-    for (const url of DOMAIN_API.PING) {
+    for (const url of config.API.PING) {
         try {
             const data = {
                 id: account.accountInfo.uid,
@@ -115,94 +92,67 @@ async function performPing(account) {
                 timestamp: Math.floor(Date.now() / 1000),
                 version: '2.2.7'
             };
-
-            const response = await executeRequest(url, data, account);
-
+            const response = await account.makeRequest(url, data);
             if (response.code === 0) {
                 account.successfulPings++;
-                const networkQuality = response.data?.ip_score ?? 'N/A';
-                console.log(`[${new Date().toLocaleTimeString()}][${account.proxyLabel}] Ping success from ${account.truncateToken()}, Network Quality: ${networkQuality}`);
-                account.retries = 0;
+                console.log(`[${account.label}] Ping successful. Network Quality: ${response.data?.ip_score || 'N/A'}`);
                 return;
-            } else {
-                console.warn(`Ping failed for token ${account.truncateToken()} using proxy ${account.proxy}`);
-                account.retries++;
             }
-        } catch (error) {
-            console.error(`Ping failed for token ${account.truncateToken()} using URL ${url}: ${error.message}`);
+        } catch (err) {
             account.retries++;
             if (account.retries >= 3) {
                 account.active = false;
-                console.error(`Deactivating proxy ${account.proxy} due to multiple failures`);
+                console.error(`[${account.label}] Deactivated due to repeated failures.`);
                 return;
             }
         }
     }
 }
 
-async function runAccount(account) {
+async function processAccount(account) {
     try {
-        console.log(`[${account.proxyLabel}] Initializing account with proxy: ${account.proxy}`);
-        const response = await executeRequest(DOMAIN_API.SESSION, {}, account);
-
+        console.log(`[${account.label}] Initializing.`);
+        const response = await account.makeRequest(config.API.SESSION, {});
         if (response.code === 0) {
             account.accountInfo = response.data;
-            if (account.accountInfo.uid) {
-                while (account.active) {
-                    await performPing(account);
-                    await new Promise(resolve => setTimeout(resolve, PING_INTERVAL));
-                }
-            } else {
-                console.error(`No UID found for token ${account.truncateToken()}`);
+            while (account.active) {
+                await performPing(account);
+                await new Promise(resolve => setTimeout(resolve, config.PING_INTERVAL));
             }
         } else {
-            console.error(`Session initialization failed for token ${account.truncateToken()}`);
+            console.error(`[${account.label}] Initialization failed.`);
         }
-    } catch (error) {
-        console.error(`Failed to initialize account for token ${account.truncateToken()}: ${error.message}`);
+    } catch (err) {
+        console.error(`[${account.label}] Error: ${err.message}`);
     }
 }
 
-async function loadData(filename) {
+async function loadFile(filename) {
     try {
-        const data = await fs.readFile(filename, 'utf8');
-        return data.split('\n').filter(line => line.trim());
-    } catch (error) {
-        console.error(`Failed to load data from ${filename}: ${error.message}`);
+        const content = await fs.readFile(filename, 'utf8');
+        return content.split('\n').filter(line => line.trim());
+    } catch (err) {
+        console.error(`Failed to read file: ${filename}`);
         process.exit(1);
     }
 }
 
 async function main() {
-    const tokens = await loadData('np_tokens.txt');
-    if (!tokens.length) {
-        console.error('No tokens found in np_tokens.txt');
+    const [tokens, proxies] = await Promise.all([loadFile('np_tokens.txt'), loadFile('proxies.txt')]);
+    if (!tokens.length || !proxies.length) {
+        console.error('No tokens or proxies available.');
         return;
     }
 
     const token = tokens[0];
-    const proxies = await loadData('proxies.txt');
-    if (!proxies.length) {
-        console.error('No proxies found in proxies.txt');
-        return;
-    }
+    const accounts = proxies.map((proxy, idx) => new Account(token, proxy, `Proxy-${idx + 1}`));
 
-    console.log('Starting NodePay Network Bot');
-    console.log(`Loaded ${proxies.length} proxies`);
-
-    const accounts = proxies.map((proxy, i) => 
-        new AccountData(token, proxy, `Proxy-${i + 1}`)
-    );
-
-    await Promise.all(accounts.map(runAccount));
+    await Promise.all(accounts.map(processAccount));
 }
 
 process.on('SIGINT', () => {
-    console.log('Program terminated by user.');
+    console.log('Terminating process.');
     process.exit(0);
 });
 
-main().catch(error => {
-    console.error('Error in main process:', error);
-    process.exit(1);
-});
+main().catch(err => console.error('Main process error:', err));
