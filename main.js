@@ -188,7 +188,7 @@ async function main() {
     console.log(`Loaded ${tokens.length} tokens and ${proxies.length} proxies`);
 
     const accounts = proxies.map((proxy, i) => 
-        new AccountData(tokens[0], proxy, `Proxy-${i + 1}`) // Adjust token assignment as needed
+        new Account(tokens[0], proxy, `Proxy-${i + 1}`) // Adjust token assignment as needed
     );
 
     await Promise.all(accounts.map(runAccount));
