@@ -136,31 +136,62 @@ function isValidProxy(proxy) {
     }
 }
 
-async function loadFile(filename) {
+async function loadTokens(filename) {
     try {
         const content = await fs.readFile(filename, 'utf8');
         return content
             .split('\n')
             .map(line => line.trim())
-            .filter(line => line && isValidProxy(line));
+            .filter(line => line); // No validation for tokens
     } catch (err) {
-        console.error(`Failed to read file: ${filename}`);
+        console.error(`Failed to read tokens from ${filename}: ${err.message}`);
+        process.exit(1);
+    }
+}
+
+async function loadProxies(filename) {
+    try {
+        const content = await fs.readFile(filename, 'utf8');
+        const validProxies = content
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line && isValidProxy(line)); // Apply proxy validation
+        const invalidProxies = content
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line && !isValidProxy(line));
+        if (invalidProxies.length > 0) {
+            console.warn(`Invalid proxies found:`, invalidProxies);
+        }
+        return validProxies;
+    } catch (err) {
+        console.error(`Failed to read proxies from ${filename}: ${err.message}`);
         process.exit(1);
     }
 }
 
 
 async function main() {
-    const [tokens, proxies] = await Promise.all([loadFile('np_tokens.txt'), loadFile('proxies.txt')]);
-    if (!tokens.length || !proxies.length) {
-        console.error('No tokens or proxies available.');
+    const tokens = await loadTokens('np_tokens.txt');
+    if (!tokens.length) {
+        console.error('No tokens found in np_tokens.txt');
         return;
     }
 
-    const token = tokens[0];
-    const accounts = proxies.map((proxy, idx) => new Account(token, proxy, `Proxy-${idx + 1}`));
+    const proxies = await loadProxies('proxies.txt');
+    if (!proxies.length) {
+        console.error('No proxies found in proxies.txt');
+        return;
+    }
 
-    await Promise.all(accounts.map(processAccount));
+    console.log('Starting NodePay Network Bot');
+    console.log(`Loaded ${tokens.length} tokens and ${proxies.length} proxies`);
+
+    const accounts = proxies.map((proxy, i) => 
+        new AccountData(tokens[0], proxy, `Proxy-${i + 1}`) // Adjust token assignment as needed
+    );
+
+    await Promise.all(accounts.map(runAccount));
 }
 
 process.on('SIGINT', () => {
