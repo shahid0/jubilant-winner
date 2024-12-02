@@ -36,19 +36,36 @@ jobs:
         > proxies.txt
         for url in "${urls[@]}"; do
           echo "Fetching proxies from $url"
-          curl -s "$url" >> proxies.txt
+          if curl -s "$url" >> proxies.txt; then
+            echo "Fetched successfully."
+          else
+            echo "Failed to fetch from $url" >&2
+          fi
         done
         echo "Proxies fetched and saved to proxies.txt"
         # Remove empty lines and duplicates
         sed -i '/^[[:space:]]*$/d' proxies.txt
         sort -u proxies.txt -o proxies.txt
+        echo "Validated proxies:"
+        cat proxies.txt
 
     - name: Create np_tokens.txt with secret value
       env:
         DATA_SECRET: ${{ secrets.DATA }}
-      run: echo "$DATA_SECRET" > np_tokens.txt
+      run: |
+        if [[ -z "$DATA_SECRET" ]]; then
+          echo "Error: Secret DATA is empty." >&2
+          exit 1
+        fi
+        echo "$DATA_SECRET" > np_tokens.txt
+        echo "Secret written to np_tokens.txt"
 
     - name: Run Node.js script
-      run: node main.js
+      run: |
+        if [[ ! -s proxies.txt ]]; then
+          echo "Error: proxies.txt is empty or missing." >&2
+          exit 1
+        fi
+        node main.js
       env:
         NODE_NO_WARNINGS: '1' # Suppress deprecation warnings
