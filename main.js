@@ -127,15 +127,28 @@ async function processAccount(account) {
     }
 }
 
+function isValidProxy(proxy) {
+    try {
+        const urlPattern = /^(https?|socks4?|socks5):\/\/[^\s:]+(:\d+)?$/;
+        return urlPattern.test(proxy);
+    } catch {
+        return false;
+    }
+}
+
 async function loadFile(filename) {
     try {
         const content = await fs.readFile(filename, 'utf8');
-        return content.split('\n').filter(line => line.trim());
+        return content
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line && isValidProxy(line));
     } catch (err) {
         console.error(`Failed to read file: ${filename}`);
         process.exit(1);
     }
 }
+
 
 async function main() {
     const [tokens, proxies] = await Promise.all([loadFile('np_tokens.txt'), loadFile('proxies.txt')]);
