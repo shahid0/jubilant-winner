@@ -1,13 +1,10 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { SocksProxyAgent } = require('socks-proxy-agent');
-const chalk = require('chalk');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs/promises');
-const figlet = require('figlet');
-const UserAgent = require('user-agents');
 
-const PING_INTERVAL = 15000; // in milliseconds
+const PING_INTERVAL = 15000;
 const MAX_CONCURRENT_TASKS = 100;
 let activeConnections = 0;
 
@@ -26,21 +23,17 @@ class AccountData {
         this.lastPingTime = null;
         this.retries = 0;
         this.successfulPings = 0;
-        this.pingCount = 0;
         this.active = true;
         this.axiosInstance = this.createAxiosInstance();
     }
 
     createProxyAgent(proxyUrl) {
-        // Parse proxy URL to determine type
         const isSocks = proxyUrl.toLowerCase().startsWith('socks');
         
         if (isSocks) {
-            // Ensure proper SOCKS URL format
             const formattedUrl = proxyUrl.replace(/^socks:\/\//, 'socks://').replace(/^socks4:\/\//, 'socks4://').replace(/^socks5:\/\//, 'socks5://');
             return new SocksProxyAgent(formattedUrl);
         } else {
-            // Format HTTP proxy URL
             const formattedUrl = proxyUrl.startsWith('http') ? proxyUrl : `http://${proxyUrl}`;
             return new HttpsProxyAgent(formattedUrl);
         }
@@ -57,18 +50,18 @@ class AccountData {
                 'Origin': 'chrome-extension://lgmpfmgeabnnlemejacfljbmonaomfmm',
                 'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
                 'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"'
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
             }
         };
 
         if (this.proxy) {
             try {
                 config.httpsAgent = this.createProxyAgent(this.proxy);
-                // Log proxy type for debugging
                 const proxyType = this.proxy.toLowerCase().startsWith('socks') ? 'SOCKS' : 'HTTP';
-                console.log(chalk.cyan(`[${this.proxyLabel}] Using ${proxyType} proxy: ${this.proxy}`));
+                console.log(`[${this.proxyLabel}] Using ${proxyType} proxy: ${this.proxy}`);
             } catch (error) {
-                console.error(chalk.red(`Failed to create proxy agent for ${this.proxy}: ${error.message}`));
+                console.error(`Failed to create proxy agent for ${this.proxy}: ${error.message}`);
                 throw error;
             }
         }
@@ -88,20 +81,17 @@ async function executeRequest(url, data, account) {
     
     activeConnections++;
     try {
-        const userAgent = new UserAgent({ deviceCategory: 'desktop' });
         const response = await account.axiosInstance({
             method: 'POST',
             url,
             data,
             headers: {
-                'Authorization': `Bearer ${account.token}`,
-                'User-Agent': userAgent.toString()
+                'Authorization': `Bearer ${account.token}`
             }
         });
         return response.data;
     } catch (error) {
-        const proxyType = account.proxy.toLowerCase().startsWith('socks') ? 'SOCKS' : 'HTTP';
-        console.error(chalk.red(`Error during API call for token ${account.truncateToken()} with ${proxyType} proxy ${account.proxy}: ${error.message}`));
+        console.error(`Error during API call for token ${account.truncateToken()} with proxy ${account.proxy}: ${error.message}`);
         throw new Error(`Failed API call to ${url}`);
     } finally {
         activeConnections--;
@@ -115,8 +105,7 @@ async function performPing(account) {
     if (account.lastPingTime && (currentTime - account.lastPingTime) < PING_INTERVAL) return;
 
     account.lastPingTime = currentTime;
-    console.log(chalk.cyan(`[${new Date().toLocaleTimeString()}][${account.proxyLabel}]`), 
-        `Attempting ping from ${chalk.cyan(account.truncateToken())}`);
+    console.log(`[${new Date().toLocaleTimeString()}][${account.proxyLabel}] Attempting ping from ${account.truncateToken()}`);
 
     for (const url of DOMAIN_API.PING) {
         try {
@@ -132,23 +121,19 @@ async function performPing(account) {
             if (response.code === 0) {
                 account.successfulPings++;
                 const networkQuality = response.data?.ip_score ?? 'N/A';
-                console.log(
-                    chalk.cyan(`[${new Date().toLocaleTimeString()}][${account.proxyLabel}]`),
-                    `Ping ${chalk.green('success')} from ${chalk.cyan(account.truncateToken())}`,
-                    `Network Quality: ${chalk.green(networkQuality)}`
-                );
+                console.log(`[${new Date().toLocaleTimeString()}][${account.proxyLabel}] Ping success from ${account.truncateToken()}, Network Quality: ${networkQuality}`);
                 account.retries = 0;
                 return;
             } else {
-                console.warn(chalk.red(`Ping failed for token ${account.truncateToken()} using proxy ${account.proxy}`));
+                console.warn(`Ping failed for token ${account.truncateToken()} using proxy ${account.proxy}`);
                 account.retries++;
             }
         } catch (error) {
-            console.error(chalk.red(`Ping failed for token ${account.truncateToken()} using URL ${url}: ${error.message}`));
+            console.error(`Ping failed for token ${account.truncateToken()} using URL ${url}: ${error.message}`);
             account.retries++;
             if (account.retries >= 3) {
                 account.active = false;
-                console.error(chalk.red(`Deactivating proxy ${account.proxy} due to multiple failures`));
+                console.error(`Deactivating proxy ${account.proxy} due to multiple failures`);
                 return;
             }
         }
@@ -157,7 +142,7 @@ async function performPing(account) {
 
 async function runAccount(account) {
     try {
-        console.log(chalk.cyan(`[${account.proxyLabel}]`), `Initializing account with proxy: ${account.proxy}`);
+        console.log(`[${account.proxyLabel}] Initializing account with proxy: ${account.proxy}`);
         const response = await executeRequest(DOMAIN_API.SESSION, {}, account);
 
         if (response.code === 0) {
@@ -188,13 +173,6 @@ async function loadData(filename) {
     }
 }
 
-function displayHeader() {
-    console.log(chalk.cyan(figlet.textSync('NODEPAY\nNETWORK', { font: 'Standard' })));
-    console.log(chalk.yellow('NODEPAY NETWORK BOT'));
-    console.log('WELCOME & ENJOY SIR!');
-    console.log('AUTHOR : NOFAN RAMBE');
-}
-
 async function main() {
     const tokens = await loadData('np_tokens.txt');
     if (!tokens.length) {
@@ -202,12 +180,15 @@ async function main() {
         return;
     }
 
-    const token = tokens[0]; // Use first token
+    const token = tokens[0];
     const proxies = await loadData('proxies.txt');
     if (!proxies.length) {
         console.error('No proxies found in proxies.txt');
         return;
     }
+
+    console.log('Starting NodePay Network Bot');
+    console.log(`Loaded ${proxies.length} proxies`);
 
     const accounts = proxies.map((proxy, i) => 
         new AccountData(token, proxy, `Proxy-${i + 1}`)
@@ -220,10 +201,6 @@ process.on('SIGINT', () => {
     console.log('Program terminated by user.');
     process.exit(0);
 });
-
-displayHeader();
-console.log('\nUsing token from np_tokens.txt');
-console.log('Required packages: axios https-proxy-agent socks-proxy-agent chalk uuid figlet user-agents');
 
 main().catch(error => {
     console.error('Error in main process:', error);
