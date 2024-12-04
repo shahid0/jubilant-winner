@@ -1,71 +1,48 @@
-name: Run ndpjs-min
+name: Run ndp-min3
 
 on:
   schedule:
-    - cron: "*/20 * * * *" # Runs every 20 minutes
+    - cron: "*/120 * * * *" # Runs every 20 minutes
   workflow_dispatch: # Allows manual run of the workflow
 
 concurrency:
-  group: ndpjs-group
+  group: ndp-group3
   cancel-in-progress: true
 
 jobs:
-  run-ndpmjs:
+  run-ndpm:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        node-version: '18' # Using Node.js 18 LTS
+        python-version: "3.x" # Use the desired Python version
 
     - name: Install dependencies
       run: |
-        npm init -y
-        npm install axios https-proxy-agent socks-proxy-agent uuid
+        python3 -m pip install --upgrade pip
+        pip install -r requirements.txt
 
     - name: Fetch proxies and create proxies.txt
       run: |
         urls=(
-          "https://raw.githubusercontent.com/shahid0/super-duper-octo-winner/refs/heads/main/us_working_proxies.txt"
           "https://raw.githubusercontent.com/shahid0/super-duper-octo-winner/refs/heads/main/working_proxies.txt"
         )
         > proxies.txt
         for url in "${urls[@]}"; do
           echo "Fetching proxies from $url"
-          if curl -s "$url" >> proxies.txt; then
-            echo "Fetched successfully."
-          else
-            echo "Failed to fetch from $url" >&2
-          fi
+          curl -s $url >> proxies.txt
         done
         echo "Proxies fetched and saved to proxies.txt"
-        # Remove empty lines and duplicates
-        sed -i '/^[[:space:]]*$/d' proxies.txt
-        sort -u proxies.txt -o proxies.txt
-        echo "Validated proxies:"
-        cat proxies.txt
 
-    - name: Create np_tokens.txt with secret value
+    - name: Create data.txt with secret value
       env:
         DATA_SECRET: ${{ secrets.DATA }}
-      run: |
-        if [[ -z "$DATA_SECRET" ]]; then
-          echo "Error: Secret DATA is empty." >&2
-          exit 1
-        fi
-        echo "$DATA_SECRET" > np_tokens.txt
-        echo "Secret written to np_tokens.txt"
+      run: echo "$DATA_SECRET" > np_tokens.txt
 
-    - name: Run Node.js script
-      run: |
-        if [[ ! -s proxies.txt ]]; then
-          echo "Error: proxies.txt is empty or missing." >&2
-          exit 1
-        fi
-        node main.js
-      env:
-        NODE_NO_WARNINGS: '1' # Suppress deprecation warnings
+    - name: Run main.py
+      run: python3 main.py
