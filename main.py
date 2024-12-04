@@ -1,288 +1,278 @@
 import asyncio
-import aiohttp
+import json
+import sys
 import time
 import uuid
-import json
-from pathlib import Path
-from typing import Dict, List, Optional
+
+from fake_useragent import UserAgent
+from curl_cffi import requests
 from loguru import logger
-from colorama import Fore, Style, init
-import sys
-import logging
-from dataclasses import dataclass, asdict
-import random
-
-# Disable unwanted logging
-logging.disable(logging.ERROR)
-
-# Initialize colorama
-init(autoreset=True)
+from pyfiglet import figlet_format
+from termcolor import colored
+import pyfiglet
+from urllib.parse import urlparse
 
 # Constants
-PING_INTERVAL = 60
-MAX_RETRIES = 3
-CONCURRENT_LIMIT = 200
-VERSION = '2.2.7'
-
-# File paths
-TOKEN_FILE = 'np_tokens.txt'
-SESSION_FILE = 'sessions.json'
-CONFIG_DIR = Path('config')
-CONFIG_DIR.mkdir(exist_ok=True)
-
-# API Configuration
+PING_INTERVAL = 0.5
 DOMAIN_API = {
     "SESSION": "http://api.nodepay.ai/api/auth/session",
-    "PING": [
-        "https://nw.nodepay.org/api/network/ping"
-    ]
+    "PING": ["http://18.142.29.174/api/network/ping", "https://nw.nodepay.org/api/network/ping"]
+}
+CONNECTION_STATES = {
+    "CONNECTED": 1,
+    "DISCONNECTED": 2,
+    "NONE_CONNECTION": 3
 }
 
-PROXY_SOURCES = {
-    'PROXYSCRAPE': 'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text',
-    'US PROXY': 'https://raw.githubusercontent.com/shahid0/super-duper-octo-winner/refs/heads/main/us_working_proxies.txt',
-    'GITCHK 1': 'https://raw.githubusercontent.com/shahid0/super-duper-octo-winner/refs/heads/main/working_proxies.txt',
-    'SERVER 1': 'https://files.ramanode.top/airdrop/grass/server_1.txt',
-    'SERVER 2': 'https://files.ramanode.top/airdrop/grass/server_2.txt'
-}
+# Global configuration
+SHOW_REQUEST_ERROR_LOG = False
 
-@dataclass
-class SessionInfo:
-    uid: str
-    browser_id: str
-    token: str
-    proxy: str
-    last_ping: float = 0.0
+# Setup logger
+logger.remove()
+logger.add(
+    sink=sys.stdout,
+    format="<r>[Nodepay]</r> | <white>{time:YYYY-MM-DD HH:mm:ss}</white> | "
+           "<level>{level: <7}</level> | <cyan>{line: <3}</cyan> | {message}",
+    colorize=True
+)
+logger = logger.opt(colors=True)
+
+def print_header():
+    ascii_art = figlet_format("NodepayBot", font="slant")
+    colored_art = colored(ascii_art, color="cyan")
+    border = "=" * 40
     
-    def to_dict(self):
-        return asdict(self)
+    print(border)
+    print(colored_art)
+    print("Welcome to NodepayBot - Automate your tasks effortlessly!")
+    print(border)
 
-class NodePayClient:
-    def __init__(self):
-        self.sessions: Dict[str, SessionInfo] = {}
-        self.active_tasks = set()
-        self.load_sessions()
-        
-        # Configure logger
-        logger.remove()
-        logger.add(
-            sys.stdout,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>",
-            colorize=True,
-            level="INFO"
-        )
-        logger.level("INFO", color=f"{Fore.GREEN}")
-        logger.level("ERROR", color=f"{Fore.RED}")
-        logger.level("WARNING", color=f"{Fore.YELLOW}")
+print_header()
 
-    def load_sessions(self):
-        """Load saved sessions from file"""
-        try:
-            if Path(SESSION_FILE).exists():
-                with open(SESSION_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.sessions = {
-                        k: SessionInfo(**v) for k, v in data.items()
-                    }
-                logger.info(f"Loaded {len(self.sessions)} saved sessions")
-        except Exception as e:
-            logger.error(f"Error loading sessions: {e}")
+def read_tokens_and_proxy():
+    with open('np_tokens.txt', 'r') as file:
+        tokens_content = sum(1 for line in file)
 
-    def save_sessions(self):
-        """Save current sessions to file"""
-        try:
-            with open(SESSION_FILE, 'w') as f:
-                json.dump({k: v.to_dict() for k, v in self.sessions.items()}, f)
-            logger.info("Sessions saved successfully")
-        except Exception as e:
-            logger.error(f"Error saving sessions: {e}")
+    with open('proxies.txt', 'r') as file:
+        proxy_count = sum(1 for line in file)
 
-    async def call_api(self, url: str, data: dict, session_info: SessionInfo) -> Optional[dict]:
-        """Make API call with retry logic"""
+    return tokens_content, proxy_count
+
+tokens_content, proxy_count = read_tokens_and_proxy()
+
+print()
+print(f"Tokens: {tokens_content} - Loaded {proxy_count} proxies\n")
+print(f"Nodepay only supports 3 connections per account. Using too many proxies may cause issues.")
+print()
+print("=" * 40)
+
+# Proxy utility
+def ask_user_for_proxy():
+    user_input = ""
+    while user_input not in ['yes', 'no']:
+        user_input = 'yes'
+        if user_input not in ['yes', 'no']:
+            print("Invalid input. Please enter 'yes' or 'no'.")
+    print(f"You selected: {'Yes' if user_input == 'yes' else 'No'}, ENJOY!\n")
+    return user_input == 'yes'
+
+def validate_proxies(proxies):
+    valid_proxies = []
+    for proxy in proxies:
+        if proxy.startswith("http://") or proxy.startswith("https://"):
+            valid_proxies.append(proxy)
+        else:
+            logger.warning(f"Invalid proxy format: {proxy}")
+    return valid_proxies
+
+def load_proxies():
+    try:
+        with open('proxies.txt', 'r') as file:
+            proxies = file.read().splitlines()
+        return proxies
+    except Exception as e:
+        logger.error(f"Failed to load proxies: {e}")
+        raise SystemExit("Exiting due to failure in loading proxies")
+
+# Main functions
+token_status = {}
+
+def dailyclaim(token):
+    try:
+        url = f"https://api.nodepay.org/api/mission/complete-mission?"
         headers = {
-            "Authorization": f"Bearer {session_info.token}",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Referer": "https://app.nodepay.ai",
+            "Origin": "https://app.nodepay.ai",
+            "Referer": "https://app.nodepay.ai/"
         }
+        data = {"mission_id": "1"}
+        response = requests.post(url, headers=headers, json=data, impersonate="chrome110")
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        url,
-                        json=data,
-                        headers=headers,
-                        proxy=session_info.proxy,
-                        timeout=30
-                    ) as response:
-                        if response.status == 403:
-                            return None
-                        response.raise_for_status()
-                        result = await response.json()
-                        if result.get("code", -1) >= 0:
-                            return result
-            except Exception as e:
-                if attempt == MAX_RETRIES - 1:
-                    logger.error(f"API call failed after {MAX_RETRIES} attempts: {e}")
-                await asyncio.sleep(2 ** attempt)
+        if response.json().get('success'):
+            if token_status.get(token) != "claimed":
+                logger.info("<green>Claim Reward Success!</green>")
+                token_status[token] = "claimed"
+        else:
+            if token_status.get(token) != "failed":
+                logger.info("<yellow>Reward Already Claimed! Or Something Wrong!</yellow>")
+                token_status[token] = "failed"
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error : {e}")
+
+async def call_api(url, data, token, proxy=None):
+    user_agent = UserAgent().chrome if UserAgent().chrome else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+    sec_ch_ua_version = user_agent.split("Chrome/")[-1].split(" ")[0]
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": user_agent,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://app.nodepay.ai/",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": "chrome-extension://lgmpfmgeabnnlemejacfljbmonaomfmm",
+        "Sec-Ch-Ua": f'"Chromium";v="{sec_ch_ua_version}", "Google Chrome";v="{sec_ch_ua_version}", "Not?A_Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+    }
+
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    try:
+        response = requests.post(url, json=data, headers=headers, proxies=proxies, impersonate="chrome110", timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.SSLError:
+        if SHOW_REQUEST_ERROR_LOG:
+            logger.error("Error during API call: SSL Error")
+        return None
+    except requests.exceptions.ConnectionError:
+        if SHOW_REQUEST_ERROR_LOG:
+            logger.error("Error during API call: Connection Error")
+        return None
+    except requests.exceptions.RequestException:
+        if SHOW_REQUEST_ERROR_LOG:
+            logger.error("Error during API call: Request Error")
+        return None
+    except json.JSONDecodeError:
+        if SHOW_REQUEST_ERROR_LOG:
+            logger.error("Error during API call: JSON Decode Error")
         return None
 
-    async def authenticate(self, proxy: str, token: str) -> Optional[SessionInfo]:
-        """Authenticate and create session"""
+def get_ip_address():
+    try:
+        response = requests.get("https://api.ipify.org?format=json")
+        if response.status_code == 200:
+            return response.json().get("ip", "Unknown")
+        else:
+            return "Unknown"
+    except requests.exceptions.RequestException:
+        return "Unknown"
+
+def extract_proxy_ip(proxy_url):
+    try:
+        parsed_url = urlparse(proxy_url)
+        return parsed_url.hostname
+    except Exception as e:
+        logger.warning(f"Failed to extract IP from proxy: {proxy_url}, error: {e}")
+        return "Unknown"
+
+async def start_ping(token, account_info, proxy):
+    browser_id = str(uuid.uuid4())
+    url_index = 0
+    while True:
         try:
-            browser_id = str(uuid.uuid4())
-            response = await self.call_api(
-                DOMAIN_API["SESSION"],
-                {},
-                SessionInfo(uid="", browser_id=browser_id, token=token, proxy=proxy)
-            )
-            
-            if response and response.get("data", {}).get("uid"):
-                uid = response["data"]["uid"]
-                session_info = SessionInfo(
-                    uid=uid,
-                    browser_id=browser_id,
-                    token=token,
-                    proxy=proxy
-                )
-                self.sessions[proxy] = session_info
-                self.save_sessions()
-                logger.info(f"Authentication successful for proxy {proxy}")
-                return session_info
+            url = DOMAIN_API["PING"][url_index]
+            data = {
+                "id": account_info.get("uid"),
+                "browser_id": browser_id,
+                "timestamp": int(time.time())
+            }
+            response = await call_api(url, data, token, proxy)
+
+            if response:
+                response_data = response.get("data", {})
+                ip_score = response_data.get("ip_score", "Unavailable")
+
+                if proxy:
+                    proxy_ip = extract_proxy_ip(proxy)
+                    logger.info(
+                        f"<green>Ping Successful</green>, IP Score: <cyan>{ip_score}</cyan>, Proxy: <cyan>{proxy_ip}</cyan>"
+                    )
+                else:
+                    ip_address = get_ip_address()
+                    logger.info(
+                        f"<green>Ping Successful</green>, IP Score: <cyan>{ip_score}</cyan>, IP Address: <cyan>{ip_address}</cyan>"
+                    )
+            else:
+                logger.warning(f"<yellow>No response from {url}</yellow>")
         except Exception as e:
-            logger.error(f"Authentication failed for proxy {proxy}: {e}")
-        return None
-
-    async def ping(self, session_info: SessionInfo):
-        """Send ping request"""
-        current_time = time.time()
-        if current_time - session_info.last_ping < PING_INTERVAL:
-            return True
-
-        data = {
-            "id": session_info.uid,
-            "browser_id": session_info.browser_id,
-            "timestamp": int(current_time),
-            "version": VERSION
-        }
-
-        # Try each ping endpoint randomly
-        ping_urls = random.sample(DOMAIN_API["PING"], len(DOMAIN_API["PING"]))
-        for url in ping_urls:
-            response = await self.call_api(url, data, session_info)
-            if response and response.get("code") == 0:
-                session_info.last_ping = current_time
-                logger.info(f"Ping successful via proxy {session_info.proxy}")
-                return True
-            elif response and response.get("code") == 403:
-                return False
-        
-        logger.warning(f"All ping attempts failed for proxy {session_info.proxy}")
-        return False
-
-    async def handle_session(self, proxy: str, token: str):
-        """Main session handler"""
-        try:
-            session_info = self.sessions.get(proxy)
-            if not session_info:
-                session_info = await self.authenticate(proxy, token)
-                if not session_info:
-                    return
-
-            while True:
-                if not await self.ping(session_info):
-                    logger.warning(f"Session invalid for proxy {proxy}, re-authenticating...")
-                    self.sessions.pop(proxy, None)
-                    return
-
-                await asyncio.sleep(PING_INTERVAL)
-
-        except Exception as e:
-            logger.error(f"Session handler error for proxy {proxy}: {e}")
+            pass
         finally:
-            self.save_sessions()
+            await asyncio.sleep(PING_INTERVAL)
+            url_index = (url_index + 1) % len(DOMAIN_API["PING"])
 
-    async def fetch_proxies(self) -> List[str]:
-        """Fetch proxies from multiple sources"""
-        all_proxies = set()
-        async with aiohttp.ClientSession() as session:
-            for source_name, url in PROXY_SOURCES.items():
-                try:
-                    async with session.get(url, timeout=10) as response:
-                        if response.status == 200:
-                            content = await response.text()
-                            proxies = content.strip().split('\n')
-                            all_proxies.update(proxies)
-                            logger.info(f"Fetched {len(proxies)} proxies from {source_name}")
-                except Exception as e:
-                    logger.error(f"Failed to fetch proxies from {source_name}: {e}")
+def log_user_data(user_data):
+    try:
+        name = user_data.get("name", "Unknown")
+        balance = user_data.get("balance", {})
+        current_amount = balance.get("current_amount", 0)
+        total_collected = balance.get("total_collected", 0)
 
-        return list(all_proxies)
+        log_message = (
+            f"<green>{name}</green>, "
+            f"Current Amount: <green>{current_amount}</green>, Total Collected: <green>{total_collected}</green>"
+        )
+        logger.info(f"Name: {log_message}")
+    except Exception as e:
+        logger.error(f"Failed to log user data: {e}")
 
-    def load_tokens(self) -> List[str]:
-        """Load tokens from file"""
+async def process_account(token, use_proxy, proxies=None):
+    proxies = proxies or []
+    for proxy in (proxies if use_proxy else [None]):
         try:
-            with open(TOKEN_FILE, 'r') as f:
-                return [line.strip() for line in f if line.strip()]
+            logger.debug(f"Trying with proxy: {proxy}")
+            response = await call_api(DOMAIN_API["SESSION"], {}, token, proxy)
+            if response and response.get("code") == 0:
+                account_info = response["data"]
+
+                log_user_data(account_info)
+
+                await start_ping(token, account_info, proxy)
+                return
+            else:
+                logger.warning(f"<yellow>Invalid or no response for token with proxy {proxy}</yellow>")
         except Exception as e:
-            logger.error(f"Failed to load tokens: {e}")
-            return []
-
-    async def run(self):
-        """Main run loop"""
-        logger.info("Starting NodePay client...")
-        
-        proxies = await self.fetch_proxies()
-        
-        while True:
-            try:
-                tokens = self.load_tokens()
-                if not tokens:
-                    logger.error("No tokens found. Please add tokens to token.txt")
-                    return
-
-                # proxies = await self.fetch_proxies()
-                if not proxies:
-                    logger.error("No proxies available. Retrying in 60 seconds...")
-                    await asyncio.sleep(60)
-                    continue
-
-                logger.info(f"Running with {len(tokens)} tokens and {len(proxies)} proxies")
-
-                tasks = set()
-                for token in tokens:
-                    for proxy in proxies:
-                        if len(tasks) >= CONCURRENT_LIMIT:
-                            done, tasks = await asyncio.wait(
-                                tasks, 
-                                return_when=asyncio.FIRST_COMPLETED
-                            )
-                        
-                        task = asyncio.create_task(
-                            self.handle_session(proxy, token)
-                        )
-                        tasks.add(task)
-
-                await asyncio.gather(*tasks)
-                await asyncio.sleep(10)
-
-            except Exception as e:
-                logger.error(f"Error in main loop: {e}")
-                await asyncio.sleep(10)
+            logger.error(f"Unhandled error with proxy {proxy} for token {token}: {e}")
+    logger.error(f"<yellow>All attempts failed</yellow>")
 
 async def main():
-    client = NodePayClient()
+    use_proxy = ask_user_for_proxy()
+    proxies = load_proxies() if use_proxy else []
     try:
-        await client.run()
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        client.save_sessions()
+        with open('np_tokens.txt', 'r') as file:
+            tokens = file.read().splitlines()
+    except FileNotFoundError:
+        print("File tokens.txt not found. Please create it.")
+        exit()
 
-if __name__ == "__main__":
+    tasks = []
+    for token in tokens:
+        tasks.append(process_account(token, use_proxy, proxies))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(f"Task for token {tokens[i]} failed: {repr(result).replace('<', '&lt;').replace('>', '&gt;')}")
+
+if __name__ == '__main__':
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nProgram terminated by user.")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Program terminated by user.")
