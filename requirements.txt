@@ -1,10 +1,7 @@
 asyncio
-aiohttp
-uuid
-cloudscraper
+requests
+curl-cffi
+fake-useragent
 loguru
-colorama
 pyfiglet
-fake_useragent
-requests[socks]
-PySocks
+termcolor
