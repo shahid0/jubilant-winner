@@ -70,7 +70,7 @@ print("=" * 40)
 def ask_user_for_proxy():
     user_input = ""
     while user_input not in ['yes', 'no']:
-        user_input = 'yes'
+        user_input = 'no'
         if user_input not in ['yes', 'no']:
             print("Invalid input. Please enter 'yes' or 'no'.")
     print(f"You selected: {'Yes' if user_input == 'yes' else 'No'}, ENJOY!\n")
