@@ -2,7 +2,7 @@ name: Run ndp-min
 
 on:
   schedule:
-    - cron: "*/20 * * * *" # Runs every 20 minutes
+    - cron: "*/120 * * * *" # Runs every 20 minutes
   workflow_dispatch: # Allows manual run of the workflow
 
 concurrency:
